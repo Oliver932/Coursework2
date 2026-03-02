@@ -72,18 +72,18 @@ stress_net = DenseNet(Stress_layer,nn.Tanh) # Note we choose hyperbolic tangent 
 disp_net =  DenseNet(Disp_layer,nn.Tanh)
 
 # Define material properties
-E =
-mu =
+E = 10.0 # N/m^2
+mu = 0.3 # Poisson's ratio
 
 stiff = E/(1-mu**2)*torch.tensor([[1,mu,0],[mu,1,0],[0,0,(1-mu)/2]]) # Hooke's law for plane stress
 stiff = stiff.unsqueeze(0)
 
 # PINN requires super large number of iterations to converge (on the order of 50e^3-100e^3)
 #
-iterations =
+iterations = 50000
 
 # Define loss function
-loss_func =
+loss_func = nn.MSELoss()
 
 # Broadcast stiffness for batch multiplication later
 stiff_bc = stiff
@@ -91,11 +91,11 @@ stiff = torch.broadcast_to(stiff, (len(x),3,3))
 
 stiff_bc = torch.broadcast_to(stiff_bc, (len(Boundary),3,3))
 
-params = list(stress_net.parameters()) + list(disp_net.parameters())
+params = list(stress_net.parameters()) + list(disp_net.parameters()) # combine the parameters of two networks for optimization
 
 # Define optimizer and scheduler
-optimizer =
-scheduler =
+optimizer = torch.optim.Adam(params, lr=1e-3)
+scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=iterations)
 
 for epoch in range(iterations):
     scheduler.step()
@@ -118,7 +118,7 @@ for epoch in range(iterations):
     # Define strain
     e_11 = dudx[:,0].unsqueeze(1)
     e_22 = dvdx[:,1].unsqueeze(1)
-    e_12 =
+    e_12 = (dudx[:,1]+dvdx[:,0]).unsqueeze(1)
 
     e = torch.cat((e_11,e_22,e_12), 1)
     e = e.unsqueeze(2)
@@ -133,15 +133,15 @@ for epoch in range(iterations):
     disp_bc = disp_net(Boundary)
     sigma_bc = stress_net(Boundary)
     u_bc = disp_bc[:,0]
-    v_bc =
+    v_bc = disp_bc[:,1]
 
     # Compute the strain and stresses at the boundary
     dudx_bc = torch.autograd.grad(u_bc, Boundary, grad_outputs=torch.ones_like(u_bc),create_graph=True)[0]
-    dvdx_bc =
+    dvdx_bc = torch.autograd.grad(v_bc, Boundary, grad_outputs=torch.ones_like(v_bc),create_graph=True)[0]
 
     e_11_bc = dudx_bc[:,0].unsqueeze(1)
     e_22_bc = dvdx_bc[:,1].unsqueeze(1)
-    e_12_bc =
+    e_12_bc = (dudx_bc[:,1]+dvdx_bc[:,0]).unsqueeze(1)
 
     e_bc = torch.cat((e_11_bc,e_22_bc,e_12_bc), 1)
     e_bc = e_bc.unsqueeze(2)
@@ -154,35 +154,35 @@ for epoch in range(iterations):
     #============= equilibrium ===================#
 
     sig_11 = sigma[:,0]
-    sig_22 =
-    sig_12 =
+    sig_22 = sigma[:,1]
+    sig_12 = sigma[:,2]
 
     # stress equilibrium in x and y direction
     dsig11dx = torch.autograd.grad(sig_11, x, grad_outputs=torch.ones_like(sig_11),create_graph=True)[0]
-    dsig22dx =
-    dsig12dx =
+    dsig22dx = torch.autograd.grad(sig_22, x, grad_outputs=torch.ones_like(sig_22),create_graph=True)[0]
+    dsig12dx = torch.autograd.grad(sig_12, x, grad_outputs=torch.ones_like(sig_12),create_graph=True)[0]
 
     eq_x1 = dsig11dx[:,0]+dsig12dx[:,1]
-    eq_x2 =
+    eq_x2 = dsig12dx[:,0]+dsig22dx[:,1]
 
     # zero body forces
     f_x1 = torch.zeros_like(eq_x1)
     f_x2 = torch.zeros_like(eq_x2)
 
     loss_eq1 = loss_func(eq_x1, f_x1)
-    loss_eq2 =
+    loss_eq2 = loss_func(eq_x2, f_x2)
     #========= boundary ========================#
 
     # specify the boundary condition
-    tau_R =
-    tau_T =
+    tau_R = 0.1
+    tau_T = 0.0
     #
     u_L= disp_net(L_boundary)
     u_B = disp_net(B_boundary)
 
     sig_R = stress_net(R_boundary)
-    sig_T =
-    sig_C =
+    sig_T = stress_net(T_boundary)
+    sig_C = stress_net(C_boundary)
 
     # Symmetry boundary condition left
     loss_BC_L = loss_func(u_L[:,0], torch.zeros_like(u_L[:,0]))
@@ -250,7 +250,7 @@ dvdx = torch.autograd.grad(v, x_full, grad_outputs=torch.ones_like(v), create_gr
 
 e_11 = dudx[:, 0].unsqueeze(1)
 e_22 = dvdx[:, 1].unsqueeze(1)
-e_12 = 0.5 * (dudx[:, 1] + dvdx[:, 0]).unsqueeze(1)
+e_12 = (dudx[:, 1] + dvdx[:, 0]).unsqueeze(1) # dropped tensorial strain to use engineering strain
 
 e = torch.cat((e_11, e_22, e_12), 1)
 e = e.unsqueeze(2)
