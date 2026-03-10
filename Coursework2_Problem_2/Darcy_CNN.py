@@ -27,8 +27,7 @@ class LpLoss(object):
         # Assume uniform mesh
         h = 1.0 / (x.size()[1] - 1.0)
 
-        all_norms = (h ** (self.d / self.p)) * torch.norm(x.view(num_examples, -1) - y.view(num_examples, -1), self.p,
-                                                          1)
+        all_norms = (h ** (self.d / self.p)) * torch.norm(x.view(num_examples, -1) - y.view(num_examples, -1), self.p, 1)
 
         if self.reduction:
             if self.size_average:
@@ -135,15 +134,6 @@ class CNN(nn.Module):
         # Output projection
         self.out_conv = nn.Conv2d(c, 1, kernel_size=1)
 
-    @staticmethod
-    def _cat(upsampled, skip):
-        """Pad upsampled if odd pooling caused a size shortfall, then concat."""
-        dy = skip.shape[-2] - upsampled.shape[-2]
-        dx = skip.shape[-1] - upsampled.shape[-1]
-        if dy > 0 or dx > 0:
-            upsampled = F.pad(upsampled, (0, dx, 0, dy))
-        return torch.cat([skip, upsampled], dim=1)
-
     def forward(self, x):
         x = x.unsqueeze(1)                             # (batch, 1, H, W)
 
@@ -155,13 +145,182 @@ class CNN(nn.Module):
         x = self.bottleneck(self.pool(s1))              # (batch, 4c, H/4, W/4)
 
         # Decoder
-        x = self.dec1(self._cat(self.up1(x), s1))      # (batch, 2c, H/2, W/2)
-        x = self.dec0(self._cat(self.up0(x), s0))      # (batch,  c, H, W)
+        x = self.dec1(torch.cat([s1, self.up1(x)], dim=1))   # (batch, 2c, H/2, W/2)
+        x = self.dec0(torch.cat([s0, self.up0(x)], dim=1))   # (batch,  c, H, W)
 
         # Output
         out = self.out_conv(x)                          # (batch, 1, H, W)
         out = out.squeeze(1)                            # (batch, H, W)
         return out
+
+######################### Plotting Functions #############################
+def plot_loss_curves(loss_train_list, loss_test_list, save_path='cnn_loss_plot.png'):
+    epochs = len(loss_train_list)
+    plt.figure(figsize=(8, 5))
+    plt.plot(range(epochs), loss_train_list, label='Train loss')
+    plt.plot(range(epochs), loss_test_list, label='Test loss')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.ylim(0, 0.05)
+    plt.legend()
+    plt.grid()
+    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    print(f'Loss plot saved -> {save_path}')
+    plt.show()
+
+
+def plot_contour_physical(net, data_dict, n_examples=4, save_path='cnn_output_preview.png', title_extra=''):
+    """3-row contour in physical space: input / ground truth / prediction."""
+    a_test = data_dict['a_test']
+    u_test = data_dict['u_test']
+    u_normalizer = data_dict['u_normalizer']
+
+    net.eval()
+    with torch.no_grad():
+        pred = u_normalizer.decode(net(a_test))
+
+    a_levels = np.linspace(a_test[:n_examples].min(), a_test[:n_examples].max(), 21)
+    u_all = np.concatenate([u_test[:n_examples].numpy(), pred[:n_examples].numpy()])
+    u_levels = np.linspace(u_all.min(), u_all.max(), 21)
+
+    fig, axes = plt.subplots(3, n_examples, figsize=(3.5 * n_examples, 8))
+
+    for i in range(n_examples):
+        ax = axes[0, i]
+        cf_a = ax.contourf(a_test[i].numpy(), levels=a_levels, cmap='RdBu_r')
+        ax.set_title(f'Sample {i+1}', fontsize=10)
+        ax.set_aspect('equal')
+        if i == 0:
+            ax.set_ylabel('a(x,y)  [input]', fontsize=10)
+
+        ax = axes[1, i]
+        cf_u = ax.contourf(u_test[i].numpy(), levels=u_levels, cmap='viridis')
+        ax.set_aspect('equal')
+        if i == 0:
+            ax.set_ylabel('u(x,y)  [truth]', fontsize=10)
+
+        ax = axes[2, i]
+        cf_p = ax.contourf(pred[i].numpy(), levels=u_levels, cmap='viridis')
+        ax.set_xlabel('x', fontsize=9)
+        ax.set_aspect('equal')
+        if i == 0:
+            ax.set_ylabel('\u00fb(x,y)  [CNN]', fontsize=10)
+
+    fig.colorbar(cf_a, ax=axes[0].tolist(), location='right', shrink=0.95, label='a(x,y)')
+    fig.colorbar(cf_u, ax=axes[1].tolist(), location='right', shrink=0.95, label='u(x,y)')
+    fig.colorbar(cf_p, ax=axes[2].tolist(), location='right', shrink=0.95, label='\u00fb(x,y)')
+
+    fig.suptitle(f'CNN: input / truth / prediction  (test set){title_extra}', fontsize=12)
+    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    print(f'Figure saved -> {save_path}')
+    plt.show()
+
+
+def plot_contour_normalised(net, data_dict, n_examples=4, save_path='cnn_output_normalised.png', title_extra=''):
+    """3-row contour in normalised space: input / ground truth / prediction."""
+    a_test = data_dict['a_test']
+    u_test = data_dict['u_test']
+    u_normalizer = data_dict['u_normalizer']
+
+    net.eval()
+    with torch.no_grad():
+        pred_norm = net(a_test)
+
+    u_test_norm = u_normalizer.encode(u_test)
+
+    a_lev = np.linspace(a_test[:n_examples].min(), a_test[:n_examples].max(), 21)
+    u_all_n = np.concatenate([u_test_norm[:n_examples].numpy(), pred_norm[:n_examples].numpy()])
+    u_lev = np.linspace(u_all_n.min(), u_all_n.max(), 21)
+
+    fig, axes = plt.subplots(3, n_examples, figsize=(3.5 * n_examples, 8))
+
+    for i in range(n_examples):
+        ax = axes[0, i]
+        cf_a = ax.contourf(a_test[i].numpy(), levels=a_lev, cmap='RdBu_r')
+        ax.set_title(f'Sample {i+1}', fontsize=10)
+        ax.set_aspect('equal')
+        if i == 0:
+            ax.set_ylabel('a(x,y)  [input, norm]', fontsize=10)
+
+        ax = axes[1, i]
+        cf_u = ax.contourf(u_test_norm[i].numpy(), levels=u_lev, cmap='viridis')
+        ax.set_aspect('equal')
+        if i == 0:
+            ax.set_ylabel('u(x,y)  [truth, norm]', fontsize=10)
+
+        ax = axes[2, i]
+        cf_p = ax.contourf(pred_norm[i].numpy(), levels=u_lev, cmap='viridis')
+        ax.set_xlabel('x', fontsize=9)
+        ax.set_aspect('equal')
+        if i == 0:
+            ax.set_ylabel('\u00fb(x,y)  [CNN, norm]', fontsize=10)
+
+    fig.colorbar(cf_a, ax=axes[0].tolist(), location='right', shrink=0.95, label='a(x,y)')
+    fig.colorbar(cf_u, ax=axes[1].tolist(), location='right', shrink=0.95, label='u(x,y)')
+    fig.colorbar(cf_p, ax=axes[2].tolist(), location='right', shrink=0.95, label='\u00fb(x,y)')
+
+    fig.suptitle(f'CNN: input / truth / prediction  (test set, norm){title_extra}', fontsize=12)
+    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    print(f'Figure saved -> {save_path}')
+    plt.show()
+
+
+def plot_contour_comparison(net, data_dict, n_examples=4, save_path='cnn_output_error.png', title_extra=''):
+    """4-row contour: input / ground truth / prediction / error."""
+    a_test = data_dict['a_test']
+    u_test = data_dict['u_test']
+    u_normalizer = data_dict['u_normalizer']
+
+    net.eval()
+    with torch.no_grad():
+        pred = u_normalizer.decode(net(a_test))
+
+    a_levels = np.linspace(a_test[:n_examples].min(), a_test[:n_examples].max(), 21)
+    u_all = np.concatenate([u_test[:n_examples].numpy(), pred[:n_examples].numpy()])
+    u_levels = np.linspace(u_all.min(), u_all.max(), 21)
+    diff = u_test[:n_examples].numpy() - pred[:n_examples].numpy()
+    diff_abs_max = np.abs(diff).max()
+    diff_levels = np.linspace(-diff_abs_max, diff_abs_max, 21)
+
+    fig, axes = plt.subplots(4, n_examples, figsize=(3.5 * n_examples, 10))
+
+    for i in range(n_examples):
+        ax = axes[0, i]
+        cf_a = ax.contourf(a_test[i].numpy(), levels=a_levels, cmap='RdBu_r')
+        ax.set_title(f'Sample {i+1}', fontsize=10)
+        ax.set_aspect('equal')
+        if i == 0:
+            ax.set_ylabel('a(x,y)  [input]', fontsize=10)
+
+        ax = axes[1, i]
+        cf_u = ax.contourf(u_test[i].numpy(), levels=u_levels, cmap='viridis')
+        ax.set_aspect('equal')
+        if i == 0:
+            ax.set_ylabel('u(x,y)  [truth]', fontsize=10)
+
+        ax = axes[2, i]
+        cf_p = ax.contourf(pred[i].numpy(), levels=u_levels, cmap='viridis')
+        ax.set_aspect('equal')
+        if i == 0:
+            ax.set_ylabel('\u00fb(x,y)  [CNN]', fontsize=10)
+
+        ax = axes[3, i]
+        cf_d = ax.contourf(diff[i], levels=diff_levels, cmap='RdBu_r')
+        ax.set_xlabel('x', fontsize=9)
+        ax.set_aspect('equal')
+        if i == 0:
+            ax.set_ylabel('u \u2212 \u00fb  [error]', fontsize=10)
+
+    fig.colorbar(cf_a, ax=axes[0].tolist(), location='right', shrink=0.95, label='a(x,y)')
+    fig.colorbar(cf_u, ax=axes[1].tolist(), location='right', shrink=0.95, label='u(x,y)')
+    fig.colorbar(cf_p, ax=axes[2].tolist(), location='right', shrink=0.95, label='\u00fb(x,y)')
+    fig.colorbar(cf_d, ax=axes[3].tolist(), location='right', shrink=0.95, label='u \u2212 \u00fb')
+
+    fig.suptitle(f'CNN: input / truth / prediction / error  (test set){title_extra}', fontsize=12)
+    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    print(f'Figure saved -> {save_path}')
+    plt.show()
+
 
 if __name__ == '__main__':
     ############################# Data processing #############################
@@ -196,7 +355,7 @@ if __name__ == '__main__':
 
     ############################# Define and train network #############################
     # Create CNN instance, define loss function and optimizer
-    channel_width = 64
+    channel_width = 6
     net = CNN(base_channels=channel_width)
     n_params = sum(p.numel() for p in net.parameters() if p.requires_grad)
     print('Number of parameters: %d' % n_params)
@@ -206,7 +365,7 @@ if __name__ == '__main__':
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=600, gamma=0.6)
 
     # Train network
-    epochs = 200 # Number of epochs
+    epochs = 60 # Number of epochs
     print("Start training CNN for {} epochs...".format(epochs))
     start_time = time()
     
@@ -250,12 +409,11 @@ if __name__ == '__main__':
     print("Train loss:{}".format(trainloss/len(train_loader)))
     print("Test loss:{}".format(testloss))
     
-    ############################# Plot #############################
-    plt.figure(1)
-    plt.plot(x, loss_train_list, label='Train loss')
-    plt.plot(x, loss_test_list, label='Test loss')
-    plt.xlabel('Epoch')
-    plt.ylabel('Loss')
-    plt.ylim(0, 0.05)
-    plt.legend()
-    plt.grid()
+    ############################# Plots #############################
+    data_dict = {
+        'a_test': a_test, 'u_test': u_test, 'u_normalizer': u_normalizer,
+    }
+    plot_loss_curves(loss_train_list, loss_test_list)
+    plot_contour_physical(net, data_dict)
+    plot_contour_normalised(net, data_dict)
+    plot_contour_comparison(net, data_dict)
