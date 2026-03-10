@@ -97,6 +97,13 @@ params = list(stress_net.parameters()) + list(disp_net.parameters()) # combine t
 optimizer = torch.optim.Adam(params, lr=1e-3)
 scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=iterations)
 
+loss_history = []
+
+# Loss weights - increase BC/constitutive weights to enforce constraints more strongly
+w_eq   = 50.0   # PDE equilibrium
+w_cons = 1.0   # constitutive (Hooke's law consistency)
+w_bc   = 10.0  # boundary conditions
+
 for epoch in range(iterations):
     scheduler.step()
     optimizer.zero_grad()
@@ -200,7 +207,11 @@ for epoch in range(iterations):
                 + loss_func(sig_C[:,2]*C_boundary[:,0]+sig_C[:,1]*C_boundary[:,1], torch.zeros_like(sig_C[:, 0]))
 
     # Define loss function:
-    loss = loss_eq1+loss_eq2+loss_cons+loss_BC_L+loss_BC_B+loss_BC_R+loss_BC_T+loss_BC_C+loss_cons_bc
+    loss = (w_eq  * (loss_eq1 + loss_eq2)
+          + w_cons * (loss_cons + loss_cons_bc)
+          + w_bc  * (loss_BC_L + loss_BC_B + loss_BC_R + loss_BC_T + loss_BC_C))
+
+    print(f"PDE: {loss_eq1.item():.4f}, BC: {loss_BC_R.item():.4f}, Cons: {loss_cons.item():.4f}")
 
 
     # ======= uncomment below for part (e) =======================
@@ -212,9 +223,21 @@ for epoch in range(iterations):
 
 
     loss.backward()
+    loss_history.append(loss.item())
     print('loss', loss, 'iter', epoch)
     optimizer.step()
 
+# Plot training loss
+plt.figure(1)
+plt.clf()
+plt.semilogy(loss_history)
+plt.xlabel('Iteration')
+plt.ylabel('Loss')
+plt.title('Training Loss')
+plt.grid(True)
+plt.tight_layout()
+plt.savefig('loss_history.png', dpi=150)
+plt.show()
 
 # Plot the stress
 import matplotlib.tri as mtri

@@ -137,7 +137,7 @@ if __name__ == '__main__':
     train_loader = Data.DataLoader(train_set, batch_size, shuffle=True)
 
     ############################# Define and train network #############################
-    # Create RNN instance, define loss function and optimizer
+    # Create CNN instance, define loss function and optimizer
     channel_width = 64
     net =
     n_params = sum(p.numel() for p in net.parameters() if p.requires_grad)
