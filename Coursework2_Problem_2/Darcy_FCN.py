@@ -212,39 +212,143 @@ if __name__ == '__main__':
     plt.legend()
     plt.grid()
     plt.show()
+
     ############################# Contour plots of network output #############################
     n_examples = 4
-    fig, axes = plt.subplots(2, n_examples, figsize=(3.5 * n_examples, 6))
+    fig, axes = plt.subplots(3, n_examples, figsize=(3.5 * n_examples, 8))
 
     net.eval()
     with torch.no_grad():
         pred = u_normalizer.decode(net(a_test))  # (n_test, H, W)
 
+    # Shared colour ranges per row; ground truth and prediction share the same u scale
+    a_levels = np.linspace(a_test[:n_examples].min(), a_test[:n_examples].max(), 21)
+    u_all = np.concatenate([u_test[:n_examples].numpy(), pred[:n_examples].numpy()])
+    u_levels = np.linspace(u_all.min(), u_all.max(), 21)
+
     for i in range(n_examples):
-        # Input a(x,y) — normalised, shown for reference
         ax = axes[0, i]
-        cf = ax.contourf(a_test[i].numpy(), levels=20, cmap='RdBu_r')
-        plt.colorbar(cf, ax=ax, fraction=0.046, pad=0.04)
-        ax.set_title(f'Sample {i+1}  —  a(x,y) [input]', fontsize=10)
-        ax.set_xlabel('x'); ax.set_ylabel('y')
+        cf_a = ax.contourf(a_test[i].numpy(), levels=a_levels, cmap='RdBu_r')
+        ax.set_title(f'Sample {i+1}', fontsize=10)
         ax.set_aspect('equal')
+        if i == 0:
+            ax.set_ylabel('a(x,y)  [input]', fontsize=10)
 
-        # FCN predicted output u(x,y)
         ax = axes[1, i]
-        cf = ax.contourf(pred[i].numpy(), levels=20, cmap='viridis')
-        plt.colorbar(cf, ax=ax, fraction=0.046, pad=0.04)
-        ax.set_title(f'Sample {i+1}  —  FCN output û(x,y)', fontsize=10)
-        ax.set_xlabel('x'); ax.set_ylabel('y')
+        cf_u = ax.contourf(u_test[i].numpy(), levels=u_levels, cmap='viridis')
         ax.set_aspect('equal')
+        if i == 0:
+            ax.set_ylabel('u(x,y)  [ground truth]', fontsize=10)
 
-    axes[0, 0].set_ylabel('y\n\na(x,y) \u2014 input', fontsize=10)
-    axes[1, 0].set_ylabel('y\n\n\u00fb(x,y) \u2014 FCN prediction', fontsize=10)
+        ax = axes[2, i]
+        cf_p = ax.contourf(pred[i].numpy(), levels=u_levels, cmap='viridis')
+        ax.set_xlabel('x', fontsize=9)
+        ax.set_aspect('equal')
+        if i == 0:
+            ax.set_ylabel('\u00fb(x,y)  [FCN output]', fontsize=10)
+
+    # One shared colorbar per row, on the right
+    fig.colorbar(cf_a, ax=axes[0].tolist(), location='right', shrink=0.95, label='a(x,y)')
+    fig.colorbar(cf_u, ax=axes[1].tolist(), location='right', shrink=0.95, label='u(x,y)')
+    fig.colorbar(cf_p, ax=axes[2].tolist(), location='right', shrink=0.95, label='\u00fb(x,y)')
 
     fig.suptitle('FCN network output  (test set)\n'
                  f'width={channel_width}, n_layers={net.layers.__len__()//3}, kernel_size=3',
-                 fontsize=12, y=1.01)
+                 fontsize=12)
     plt.savefig('fcn_output_preview.png', dpi=150, bbox_inches='tight')
     print('Figure saved -> fcn_output_preview.png')
+    plt.show()
+
+    ############################# Contour plots in normalised space #############################
+    # a_test is already encoded; encode u and use raw net output (before decode)
+    net.eval()
+    with torch.no_grad():
+        pred_norm = net(a_test)           # normalised prediction (n_test, H, W)
+
+    u_test_norm = u_normalizer.encode(u_test)  # normalised ground truth
+
+    fig2, axes2 = plt.subplots(3, n_examples, figsize=(3.5 * n_examples, 8))
+
+    a_lev_n = np.linspace(a_test[:n_examples].min(), a_test[:n_examples].max(), 21)
+    u_all_n = np.concatenate([u_test_norm[:n_examples].numpy(), pred_norm[:n_examples].numpy()])
+    u_lev_n = np.linspace(u_all_n.min(), u_all_n.max(), 21)
+
+    for i in range(n_examples):
+        ax = axes2[0, i]
+        cf2_a = ax.contourf(a_test[i].numpy(), levels=a_lev_n, cmap='RdBu_r')
+        ax.set_title(f'Sample {i+1}', fontsize=10)
+        ax.set_aspect('equal')
+        if i == 0:
+            ax.set_ylabel('a(x,y)  [input, norm]', fontsize=10)
+
+        ax = axes2[1, i]
+        cf2_u = ax.contourf(u_test_norm[i].numpy(), levels=u_lev_n, cmap='viridis')
+        ax.set_aspect('equal')
+        if i == 0:
+            ax.set_ylabel('u(x,y)  [truth, norm]', fontsize=10)
+
+        ax = axes2[2, i]
+        cf2_p = ax.contourf(pred_norm[i].numpy(), levels=u_lev_n, cmap='viridis')
+        ax.set_xlabel('x', fontsize=9)
+        ax.set_aspect('equal')
+        if i == 0:
+            ax.set_ylabel('\u00fb(x,y)  [FCN, norm]', fontsize=10)
+
+    fig2.colorbar(cf2_a, ax=axes2[0].tolist(), location='right', shrink=0.95, label='a(x,y)')
+    fig2.colorbar(cf2_u, ax=axes2[1].tolist(), location='right', shrink=0.95, label='u(x,y)')
+    fig2.colorbar(cf2_p, ax=axes2[2].tolist(), location='right', shrink=0.95, label='\u00fb(x,y)')
+
+    fig2.suptitle('FCN network output  (test set, norm space)\n'
+                  f'width={channel_width}, n_layers={net.layers.__len__()//3}, kernel_size=3',
+                  fontsize=12)
+    plt.savefig('fcn_output_normalised.png', dpi=150, bbox_inches='tight')
+    print('Figure saved -> fcn_output_normalised.png')
+    plt.show()
+
+    ############################# Input / truth / prediction / error plot #############################
+    diff = u_test[:n_examples].numpy() - pred[:n_examples].numpy()  # truth - prediction
+    diff_abs_max = np.abs(diff).max()
+    diff_levels = np.linspace(-diff_abs_max, diff_abs_max, 21)
+
+    fig3, axes3 = plt.subplots(4, n_examples, figsize=(3.5 * n_examples, 10))
+
+    for i in range(n_examples):
+        ax = axes3[0, i]
+        cf3_a = ax.contourf(a_test[i].numpy(), levels=a_levels, cmap='RdBu_r')
+        ax.set_title(f'Sample {i+1}', fontsize=10)
+        ax.set_aspect('equal')
+        if i == 0:
+            ax.set_ylabel('a(x,y)  [input]', fontsize=10)
+
+        ax = axes3[1, i]
+        cf3_u = ax.contourf(u_test[i].numpy(), levels=u_levels, cmap='viridis')
+        ax.set_aspect('equal')
+        if i == 0:
+            ax.set_ylabel('u(x,y)  [truth]', fontsize=10)
+
+        ax = axes3[2, i]
+        cf3_p = ax.contourf(pred[i].numpy(), levels=u_levels, cmap='viridis')
+        ax.set_aspect('equal')
+        if i == 0:
+            ax.set_ylabel('\u00fb(x,y)  [FCN]', fontsize=10)
+
+        ax = axes3[3, i]
+        cf3_d = ax.contourf(diff[i], levels=diff_levels, cmap='RdBu_r')
+        ax.set_xlabel('x', fontsize=9)
+        ax.set_aspect('equal')
+        if i == 0:
+            ax.set_ylabel('u \u2212 \u00fb  [error]', fontsize=10)
+
+    fig3.colorbar(cf3_a, ax=axes3[0].tolist(), location='right', shrink=0.95, label='a(x,y)')
+    fig3.colorbar(cf3_u, ax=axes3[1].tolist(), location='right', shrink=0.95, label='u(x,y)')
+    fig3.colorbar(cf3_p, ax=axes3[2].tolist(), location='right', shrink=0.95, label='\u00fb(x,y)')
+    fig3.colorbar(cf3_d, ax=axes3[3].tolist(), location='right', shrink=0.95, label='u \u2212 \u00fb')
+
+    fig3.suptitle('FCN: input / truth / prediction / error  (test set)\n'
+                  f'width={channel_width}, n_layers={net.layers.__len__()//3}, kernel_size=3',
+                  fontsize=12)
+    plt.savefig('fcn_output_error.png', dpi=150, bbox_inches='tight')
+    print('Figure saved -> fcn_output_error.png')
     plt.show()
 
     
