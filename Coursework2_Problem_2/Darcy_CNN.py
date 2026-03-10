@@ -113,9 +113,9 @@ class ResConvBlock2d(nn.Module):
 
 # Define network — 2D U-Net with residual conv blocks
 class CNN(nn.Module):
-    def __init__(self, base_channels=64):
+    def __init__(self, width=64):
         super(CNN, self).__init__()
-        c = base_channels
+        c = width
 
         # Encoder
         self.enc0 = ResConvBlock2d(1, c)
@@ -169,52 +169,6 @@ def plot_loss_curves(loss_train_list, loss_test_list, save_path='cnn_loss_plot.p
     plt.show()
 
 
-def plot_contour_physical(net, data_dict, n_examples=4, save_path='cnn_output_preview.png', title_extra=''):
-    """3-row contour in physical space: input / ground truth / prediction."""
-    a_test = data_dict['a_test']
-    u_test = data_dict['u_test']
-    u_normalizer = data_dict['u_normalizer']
-
-    net.eval()
-    with torch.no_grad():
-        pred = u_normalizer.decode(net(a_test))
-
-    a_levels = np.linspace(a_test[:n_examples].min(), a_test[:n_examples].max(), 21)
-    u_all = np.concatenate([u_test[:n_examples].numpy(), pred[:n_examples].numpy()])
-    u_levels = np.linspace(u_all.min(), u_all.max(), 21)
-
-    fig, axes = plt.subplots(3, n_examples, figsize=(3.5 * n_examples, 8))
-
-    for i in range(n_examples):
-        ax = axes[0, i]
-        cf_a = ax.contourf(a_test[i].numpy(), levels=a_levels, cmap='RdBu_r')
-        ax.set_title(f'Sample {i+1}', fontsize=10)
-        ax.set_aspect('equal')
-        if i == 0:
-            ax.set_ylabel('a(x,y)  [input]', fontsize=10)
-
-        ax = axes[1, i]
-        cf_u = ax.contourf(u_test[i].numpy(), levels=u_levels, cmap='viridis')
-        ax.set_aspect('equal')
-        if i == 0:
-            ax.set_ylabel('u(x,y)  [truth]', fontsize=10)
-
-        ax = axes[2, i]
-        cf_p = ax.contourf(pred[i].numpy(), levels=u_levels, cmap='viridis')
-        ax.set_xlabel('x', fontsize=9)
-        ax.set_aspect('equal')
-        if i == 0:
-            ax.set_ylabel('\u00fb(x,y)  [CNN]', fontsize=10)
-
-    fig.colorbar(cf_a, ax=axes[0].tolist(), location='right', shrink=0.95, label='a(x,y)')
-    fig.colorbar(cf_u, ax=axes[1].tolist(), location='right', shrink=0.95, label='u(x,y)')
-    fig.colorbar(cf_p, ax=axes[2].tolist(), location='right', shrink=0.95, label='\u00fb(x,y)')
-
-    fig.suptitle(f'CNN: input / truth / prediction  (test set){title_extra}', fontsize=12)
-    plt.savefig(save_path, dpi=150, bbox_inches='tight')
-    print(f'Figure saved -> {save_path}')
-    plt.show()
-
 
 def plot_contour_normalised(net, data_dict, n_examples=4, save_path='cnn_output_normalised.png', title_extra=''):
     """3-row contour in normalised space: input / ground truth / prediction."""
@@ -265,63 +219,6 @@ def plot_contour_normalised(net, data_dict, n_examples=4, save_path='cnn_output_
     plt.show()
 
 
-def plot_contour_comparison(net, data_dict, n_examples=4, save_path='cnn_output_error.png', title_extra=''):
-    """4-row contour: input / ground truth / prediction / error."""
-    a_test = data_dict['a_test']
-    u_test = data_dict['u_test']
-    u_normalizer = data_dict['u_normalizer']
-
-    net.eval()
-    with torch.no_grad():
-        pred = u_normalizer.decode(net(a_test))
-
-    a_levels = np.linspace(a_test[:n_examples].min(), a_test[:n_examples].max(), 21)
-    u_all = np.concatenate([u_test[:n_examples].numpy(), pred[:n_examples].numpy()])
-    u_levels = np.linspace(u_all.min(), u_all.max(), 21)
-    diff = u_test[:n_examples].numpy() - pred[:n_examples].numpy()
-    diff_abs_max = np.abs(diff).max()
-    diff_levels = np.linspace(-diff_abs_max, diff_abs_max, 21)
-
-    fig, axes = plt.subplots(4, n_examples, figsize=(3.5 * n_examples, 10))
-
-    for i in range(n_examples):
-        ax = axes[0, i]
-        cf_a = ax.contourf(a_test[i].numpy(), levels=a_levels, cmap='RdBu_r')
-        ax.set_title(f'Sample {i+1}', fontsize=10)
-        ax.set_aspect('equal')
-        if i == 0:
-            ax.set_ylabel('a(x,y)  [input]', fontsize=10)
-
-        ax = axes[1, i]
-        cf_u = ax.contourf(u_test[i].numpy(), levels=u_levels, cmap='viridis')
-        ax.set_aspect('equal')
-        if i == 0:
-            ax.set_ylabel('u(x,y)  [truth]', fontsize=10)
-
-        ax = axes[2, i]
-        cf_p = ax.contourf(pred[i].numpy(), levels=u_levels, cmap='viridis')
-        ax.set_aspect('equal')
-        if i == 0:
-            ax.set_ylabel('\u00fb(x,y)  [CNN]', fontsize=10)
-
-        ax = axes[3, i]
-        cf_d = ax.contourf(diff[i], levels=diff_levels, cmap='RdBu_r')
-        ax.set_xlabel('x', fontsize=9)
-        ax.set_aspect('equal')
-        if i == 0:
-            ax.set_ylabel('u \u2212 \u00fb  [error]', fontsize=10)
-
-    fig.colorbar(cf_a, ax=axes[0].tolist(), location='right', shrink=0.95, label='a(x,y)')
-    fig.colorbar(cf_u, ax=axes[1].tolist(), location='right', shrink=0.95, label='u(x,y)')
-    fig.colorbar(cf_p, ax=axes[2].tolist(), location='right', shrink=0.95, label='\u00fb(x,y)')
-    fig.colorbar(cf_d, ax=axes[3].tolist(), location='right', shrink=0.95, label='u \u2212 \u00fb')
-
-    fig.suptitle(f'CNN: input / truth / prediction / error  (test set){title_extra}', fontsize=12)
-    plt.savefig(save_path, dpi=150, bbox_inches='tight')
-    print(f'Figure saved -> {save_path}')
-    plt.show()
-
-
 if __name__ == '__main__':
     ############################# Data processing #############################
     # Read data from mat
@@ -355,13 +252,18 @@ if __name__ == '__main__':
 
     ############################# Define and train network #############################
     # Create CNN instance, define loss function and optimizer
-    channel_width = 6
-    net = CNN(base_channels=channel_width)
+
+    # HYPERPARAMETERS
+    width = 4
+    learning_rate = 0.003
+
+
+    net = CNN(width=width)
     n_params = sum(p.numel() for p in net.parameters() if p.requires_grad)
     print('Number of parameters: %d' % n_params)
 
     loss_func = LpLoss()
-    optimizer = torch.optim.Adam(net.parameters(), lr=0.001)
+    optimizer = torch.optim.Adam(net.parameters(), lr=learning_rate)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=600, gamma=0.6)
 
     # Train network
@@ -414,6 +316,4 @@ if __name__ == '__main__':
         'a_test': a_test, 'u_test': u_test, 'u_normalizer': u_normalizer,
     }
     plot_loss_curves(loss_train_list, loss_test_list)
-    plot_contour_physical(net, data_dict)
     plot_contour_normalised(net, data_dict)
-    plot_contour_comparison(net, data_dict)
