@@ -118,11 +118,15 @@ class FCN(nn.Module):
         out = out.squeeze(1)
         return out
 
-if __name__ == '__main__':
-    ############################# Data processing #############################
-    train_path = 'Darcy_2D_data_train.mat'
-    test_path = 'Darcy_2D_data_test.mat'
+######################### Data Preparation #############################
+def prepare_data(train_path='Darcy_2D_data_train.mat', test_path='Darcy_2D_data_test.mat'):
+    """Load and normalise the Darcy 2D dataset.
 
+    Returns dict with keys:
+        a_train, a_test   — normalised input tensors
+        u_train, u_test   — unnormalised output tensors (ground truth)
+        a_normalizer, u_normalizer — UnitGaussianNormalizer objects
+    """
     data_reader = MatRead(train_path)
     a_train = data_reader.get_a()
     u_train = data_reader.get_u()
@@ -131,41 +135,68 @@ if __name__ == '__main__':
     a_test = data_reader.get_a()
     u_test = data_reader.get_u()
 
-    # Normalize data
     a_normalizer = UnitGaussianNormalizer(a_train)
     a_train = a_normalizer.encode(a_train)
     a_test = a_normalizer.encode(a_test)
 
     u_normalizer = UnitGaussianNormalizer(u_train)
 
-    print(a_train.shape)
-    print(a_test.shape)
-    print(u_train.shape)
-    print(u_test.shape)
+    print(f"a_train: {a_train.shape},  a_test: {a_test.shape}")
+    print(f"u_train: {u_train.shape},  u_test: {u_test.shape}")
 
-    # Create data loader
-    batch_size = 20
-    train_set = Data.TensorDataset(a_train, u_train)
+    return {
+        'a_train': a_train, 'a_test': a_test,
+        'u_train': u_train, 'u_test': u_test,
+        'a_normalizer': a_normalizer, 'u_normalizer': u_normalizer,
+    }
+
+######################### Training Function #############################
+def train_fcn_model(
+    data_dict,
+    width,
+    n_layers,
+    kernel_size,
+    learning_rate,
+    batch_size=20,
+    epochs=60,
+    trial=None,
+):
+    """Train the FCN operator-learning model.
+
+    Args:
+        data_dict     : dict returned by prepare_data()
+        width         : channel width of the FCN
+        n_layers      : number of conv layers
+        kernel_size   : kernel size (odd integer)
+        learning_rate : Adam learning rate
+        batch_size    : mini-batch size
+        epochs        : number of training epochs
+        trial         : optional Optuna trial for pruning
+
+    Returns: net, loss_train_list, loss_test_list, final_test_loss
+    """
+    a_train = data_dict['a_train']
+    a_test  = data_dict['a_test']
+    u_train = data_dict['u_train']
+    u_test  = data_dict['u_test']
+    u_normalizer = data_dict['u_normalizer']
+
+    train_set    = Data.TensorDataset(a_train, u_train)
     train_loader = Data.DataLoader(train_set, batch_size, shuffle=True)
 
-    ############################# Define and train network #############################
-    channel_width = 12
-    net = FCN(width=channel_width, n_layers=3, kernel_size=3)
+    net = FCN(width=width, n_layers=n_layers, kernel_size=kernel_size)
     n_params = sum(p.numel() for p in net.parameters() if p.requires_grad)
-    print('Number of parameters: %d' % n_params)
+    print(f'FCN: width={width}, n_layers={n_layers}, kernel_size={kernel_size} -> {n_params} parameters')
 
     loss_func = LpLoss()
-    optimizer = torch.optim.Adam(net.parameters(), lr=0.001)
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=600, gamma=0.6)
+    optimizer = torch.optim.Adam(net.parameters(), lr=learning_rate)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
 
-    # Train network
-    epochs = 60
-    print("Start training FCN for {} epochs...".format(epochs))
+    print(f"Start training FCN for {epochs} epochs...")
     start_time = time()
 
     loss_train_list = []
     loss_test_list = []
-    x = []
     for epoch in range(epochs):
         net.train(True)
         trainloss = 0
@@ -182,7 +213,6 @@ if __name__ == '__main__':
 
             trainloss += l.item()
 
-        # Test
         net.eval()
         with torch.no_grad():
             test_output = net(a_test)
@@ -190,41 +220,58 @@ if __name__ == '__main__':
             testloss = loss_func(test_output, u_test).item()
 
         if epoch % 10 == 0:
-            print("epoch:{}, train loss:{}, test loss:{}".format(epoch, trainloss/len(train_loader), testloss))
+            print(f"  epoch:{epoch}, train loss:{trainloss/len(train_loader):.6f}, test loss:{testloss:.6f}")
 
-        loss_train_list.append(trainloss/len(train_loader))
+        loss_train_list.append(trainloss / len(train_loader))
         loss_test_list.append(testloss)
-        x.append(epoch)
+
+        if trial is not None:
+            trial.report(testloss, epoch)
+            if trial.should_prune():
+                import optuna
+                raise optuna.TrialPruned()
 
     total_time = time() - start_time
-    total_time_str = str(datetime.timedelta(seconds=int(total_time)))
-    print('Training time: {}'.format(total_time_str))
-    print("Train loss:{}".format(trainloss/len(train_loader)))
-    print("Test loss:{}".format(testloss))
+    print(f'Training time: {str(datetime.timedelta(seconds=int(total_time)))}')
+    print(f"Train loss: {loss_train_list[-1]:.6f}")
+    print(f"Test loss:  {loss_test_list[-1]:.6f}")
 
-    ############################# Plot #############################
-    plt.figure(1)
-    plt.plot(x, loss_train_list, label='Train loss')
-    plt.plot(x, loss_test_list, label='Test loss') 
+    return net, loss_train_list, loss_test_list, loss_test_list[-1]
+
+######################### Plotting Functions #############################
+def plot_loss_curves(loss_train_list, loss_test_list, save_path='fcn_loss_plot.png'):
+    epochs = len(loss_train_list)
+    plt.figure(figsize=(8, 5))
+    plt.plot(range(epochs), loss_train_list, label='Train loss')
+    plt.plot(range(epochs), loss_test_list, label='Test loss')
     plt.xlabel('Epoch')
     plt.ylabel('Loss')
     plt.ylim(0, 0.05)
     plt.legend()
     plt.grid()
+    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    print(f'Loss plot saved -> {save_path}')
     plt.show()
 
-    ############################# Contour plots of network output #############################
-    n_examples = 4
-    fig, axes = plt.subplots(3, n_examples, figsize=(3.5 * n_examples, 8))
+
+def plot_contour_comparison(net, data_dict, n_examples=4, save_path='fcn_output_error.png', title_extra=''):
+    """4-row contour: input / ground truth / prediction / error."""
+    a_test = data_dict['a_test']
+    u_test = data_dict['u_test']
+    u_normalizer = data_dict['u_normalizer']
 
     net.eval()
     with torch.no_grad():
-        pred = u_normalizer.decode(net(a_test))  # (n_test, H, W)
+        pred = u_normalizer.decode(net(a_test))
 
-    # Shared colour ranges per row; ground truth and prediction share the same u scale
     a_levels = np.linspace(a_test[:n_examples].min(), a_test[:n_examples].max(), 21)
     u_all = np.concatenate([u_test[:n_examples].numpy(), pred[:n_examples].numpy()])
     u_levels = np.linspace(u_all.min(), u_all.max(), 21)
+    diff = u_test[:n_examples].numpy() - pred[:n_examples].numpy()
+    diff_abs_max = np.abs(diff).max()
+    diff_levels = np.linspace(-diff_abs_max, diff_abs_max, 21)
+
+    fig, axes = plt.subplots(4, n_examples, figsize=(3.5 * n_examples, 10))
 
     for i in range(n_examples):
         ax = axes[0, i]
@@ -238,118 +285,53 @@ if __name__ == '__main__':
         cf_u = ax.contourf(u_test[i].numpy(), levels=u_levels, cmap='viridis')
         ax.set_aspect('equal')
         if i == 0:
-            ax.set_ylabel('u(x,y)  [ground truth]', fontsize=10)
+            ax.set_ylabel('u(x,y)  [truth]', fontsize=10)
 
         ax = axes[2, i]
         cf_p = ax.contourf(pred[i].numpy(), levels=u_levels, cmap='viridis')
-        ax.set_xlabel('x', fontsize=9)
-        ax.set_aspect('equal')
-        if i == 0:
-            ax.set_ylabel('\u00fb(x,y)  [FCN output]', fontsize=10)
-
-    # One shared colorbar per row, on the right
-    fig.colorbar(cf_a, ax=axes[0].tolist(), location='right', shrink=0.95, label='a(x,y)')
-    fig.colorbar(cf_u, ax=axes[1].tolist(), location='right', shrink=0.95, label='u(x,y)')
-    fig.colorbar(cf_p, ax=axes[2].tolist(), location='right', shrink=0.95, label='\u00fb(x,y)')
-
-    fig.suptitle('FCN network output  (test set)\n'
-                 f'width={channel_width}, n_layers={net.layers.__len__()//3}, kernel_size=3',
-                 fontsize=12)
-    plt.savefig('fcn_output_preview.png', dpi=150, bbox_inches='tight')
-    print('Figure saved -> fcn_output_preview.png')
-    plt.show()
-
-    ############################# Contour plots in normalised space #############################
-    # a_test is already encoded; encode u and use raw net output (before decode)
-    net.eval()
-    with torch.no_grad():
-        pred_norm = net(a_test)           # normalised prediction (n_test, H, W)
-
-    u_test_norm = u_normalizer.encode(u_test)  # normalised ground truth
-
-    fig2, axes2 = plt.subplots(3, n_examples, figsize=(3.5 * n_examples, 8))
-
-    a_lev_n = np.linspace(a_test[:n_examples].min(), a_test[:n_examples].max(), 21)
-    u_all_n = np.concatenate([u_test_norm[:n_examples].numpy(), pred_norm[:n_examples].numpy()])
-    u_lev_n = np.linspace(u_all_n.min(), u_all_n.max(), 21)
-
-    for i in range(n_examples):
-        ax = axes2[0, i]
-        cf2_a = ax.contourf(a_test[i].numpy(), levels=a_lev_n, cmap='RdBu_r')
-        ax.set_title(f'Sample {i+1}', fontsize=10)
-        ax.set_aspect('equal')
-        if i == 0:
-            ax.set_ylabel('a(x,y)  [input, norm]', fontsize=10)
-
-        ax = axes2[1, i]
-        cf2_u = ax.contourf(u_test_norm[i].numpy(), levels=u_lev_n, cmap='viridis')
-        ax.set_aspect('equal')
-        if i == 0:
-            ax.set_ylabel('u(x,y)  [truth, norm]', fontsize=10)
-
-        ax = axes2[2, i]
-        cf2_p = ax.contourf(pred_norm[i].numpy(), levels=u_lev_n, cmap='viridis')
-        ax.set_xlabel('x', fontsize=9)
-        ax.set_aspect('equal')
-        if i == 0:
-            ax.set_ylabel('\u00fb(x,y)  [FCN, norm]', fontsize=10)
-
-    fig2.colorbar(cf2_a, ax=axes2[0].tolist(), location='right', shrink=0.95, label='a(x,y)')
-    fig2.colorbar(cf2_u, ax=axes2[1].tolist(), location='right', shrink=0.95, label='u(x,y)')
-    fig2.colorbar(cf2_p, ax=axes2[2].tolist(), location='right', shrink=0.95, label='\u00fb(x,y)')
-
-    fig2.suptitle('FCN network output  (test set, norm space)\n'
-                  f'width={channel_width}, n_layers={net.layers.__len__()//3}, kernel_size=3',
-                  fontsize=12)
-    plt.savefig('fcn_output_normalised.png', dpi=150, bbox_inches='tight')
-    print('Figure saved -> fcn_output_normalised.png')
-    plt.show()
-
-    ############################# Input / truth / prediction / error plot #############################
-    diff = u_test[:n_examples].numpy() - pred[:n_examples].numpy()  # truth - prediction
-    diff_abs_max = np.abs(diff).max()
-    diff_levels = np.linspace(-diff_abs_max, diff_abs_max, 21)
-
-    fig3, axes3 = plt.subplots(4, n_examples, figsize=(3.5 * n_examples, 10))
-
-    for i in range(n_examples):
-        ax = axes3[0, i]
-        cf3_a = ax.contourf(a_test[i].numpy(), levels=a_levels, cmap='RdBu_r')
-        ax.set_title(f'Sample {i+1}', fontsize=10)
-        ax.set_aspect('equal')
-        if i == 0:
-            ax.set_ylabel('a(x,y)  [input]', fontsize=10)
-
-        ax = axes3[1, i]
-        cf3_u = ax.contourf(u_test[i].numpy(), levels=u_levels, cmap='viridis')
-        ax.set_aspect('equal')
-        if i == 0:
-            ax.set_ylabel('u(x,y)  [truth]', fontsize=10)
-
-        ax = axes3[2, i]
-        cf3_p = ax.contourf(pred[i].numpy(), levels=u_levels, cmap='viridis')
         ax.set_aspect('equal')
         if i == 0:
             ax.set_ylabel('\u00fb(x,y)  [FCN]', fontsize=10)
 
-        ax = axes3[3, i]
-        cf3_d = ax.contourf(diff[i], levels=diff_levels, cmap='RdBu_r')
+        ax = axes[3, i]
+        cf_d = ax.contourf(diff[i], levels=diff_levels, cmap='RdBu_r')
         ax.set_xlabel('x', fontsize=9)
         ax.set_aspect('equal')
         if i == 0:
             ax.set_ylabel('u \u2212 \u00fb  [error]', fontsize=10)
 
-    fig3.colorbar(cf3_a, ax=axes3[0].tolist(), location='right', shrink=0.95, label='a(x,y)')
-    fig3.colorbar(cf3_u, ax=axes3[1].tolist(), location='right', shrink=0.95, label='u(x,y)')
-    fig3.colorbar(cf3_p, ax=axes3[2].tolist(), location='right', shrink=0.95, label='\u00fb(x,y)')
-    fig3.colorbar(cf3_d, ax=axes3[3].tolist(), location='right', shrink=0.95, label='u \u2212 \u00fb')
+    fig.colorbar(cf_a, ax=axes[0].tolist(), location='right', shrink=0.95, label='a(x,y)')
+    fig.colorbar(cf_u, ax=axes[1].tolist(), location='right', shrink=0.95, label='u(x,y)')
+    fig.colorbar(cf_p, ax=axes[2].tolist(), location='right', shrink=0.95, label='\u00fb(x,y)')
+    fig.colorbar(cf_d, ax=axes[3].tolist(), location='right', shrink=0.95, label='u \u2212 \u00fb')
 
-    fig3.suptitle('FCN: input / truth / prediction / error  (test set)\n'
-                  f'width={channel_width}, n_layers={net.layers.__len__()//3}, kernel_size=3',
-                  fontsize=12)
-    plt.savefig('fcn_output_error.png', dpi=150, bbox_inches='tight')
-    print('Figure saved -> fcn_output_error.png')
+    fig.suptitle(f'FCN: input / truth / prediction / error  (test set){title_extra}', fontsize=12)
+    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    print(f'Figure saved -> {save_path}')
     plt.show()
 
-    
+
+if __name__ == '__main__':
+    ############################# Data processing #############################
+    data_dict = prepare_data()
+
+    ############################# Train #############################
+    channel_width = 12
+    n_layers = 3
+    kernel_size = 3
+    learning_rate = 0.001
+    epochs = 60
+
+    net, loss_train_list, loss_test_list, final_loss = train_fcn_model(
+        data_dict,
+        width=channel_width,
+        n_layers=n_layers,
+        kernel_size=kernel_size,
+        learning_rate=learning_rate,
+        epochs=epochs,
+    )
+
+    ############################# Plots #############################
+    plot_loss_curves(loss_train_list, loss_test_list)
+    plot_contour_comparison(net, data_dict)
 
