@@ -159,7 +159,7 @@ if __name__ == '__main__':
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=600, gamma=0.6)
 
     # Train network
-    epochs = 200
+    epochs = 60
     print("Start training FCN for {} epochs...".format(epochs))
     start_time = time()
 
@@ -211,3 +211,41 @@ if __name__ == '__main__':
     plt.ylim(0, 0.05)
     plt.legend()
     plt.grid()
+    plt.show()
+    ############################# Contour plots of network output #############################
+    n_examples = 4
+    fig, axes = plt.subplots(2, n_examples, figsize=(3.5 * n_examples, 6))
+
+    net.eval()
+    with torch.no_grad():
+        pred = u_normalizer.decode(net(a_test))  # (n_test, H, W)
+
+    for i in range(n_examples):
+        # Input a(x,y) — normalised, shown for reference
+        ax = axes[0, i]
+        cf = ax.contourf(a_test[i].numpy(), levels=20, cmap='RdBu_r')
+        plt.colorbar(cf, ax=ax, fraction=0.046, pad=0.04)
+        ax.set_title(f'Sample {i+1}  —  a(x,y) [input]', fontsize=10)
+        ax.set_xlabel('x'); ax.set_ylabel('y')
+        ax.set_aspect('equal')
+
+        # FCN predicted output u(x,y)
+        ax = axes[1, i]
+        cf = ax.contourf(pred[i].numpy(), levels=20, cmap='viridis')
+        plt.colorbar(cf, ax=ax, fraction=0.046, pad=0.04)
+        ax.set_title(f'Sample {i+1}  —  FCN output û(x,y)', fontsize=10)
+        ax.set_xlabel('x'); ax.set_ylabel('y')
+        ax.set_aspect('equal')
+
+    axes[0, 0].set_ylabel('y\n\na(x,y) \u2014 input', fontsize=10)
+    axes[1, 0].set_ylabel('y\n\n\u00fb(x,y) \u2014 FCN prediction', fontsize=10)
+
+    fig.suptitle('FCN network output  (test set)\n'
+                 f'width={channel_width}, n_layers={net.layers.__len__()//3}, kernel_size=3',
+                 fontsize=12, y=1.01)
+    plt.savefig('fcn_output_preview.png', dpi=150, bbox_inches='tight')
+    print('Figure saved -> fcn_output_preview.png')
+    plt.show()
+
+    
+
