@@ -244,25 +244,30 @@ def plot_contour_normalised(net, data_dict, n_examples=4, save_path='fno_output_
         cf_a = ax.contourf(a_test[i].numpy(), levels=a_lev, cmap='RdBu_r')
         ax.set_title(f'Sample {i+1}', fontsize=10)
         ax.set_aspect('equal')
+        ax.set_xlabel('')
+        ax.set_ylabel('')
         if i == 0:
-            ax.set_ylabel('a(x,y)  [input, norm]', fontsize=10)
+            ax.set_ylabel(r'$a(\mathbf{x})$  [input, norm]', fontsize=10)
 
         ax = axes[1, i]
         cf_u = ax.contourf(u_test_norm[i].numpy(), levels=u_lev, cmap='viridis')
         ax.set_aspect('equal')
+        ax.set_xlabel('')
+        ax.set_ylabel('')
         if i == 0:
-            ax.set_ylabel('u(x,y)  [truth, norm]', fontsize=10)
+            ax.set_ylabel(r'$u(\mathbf{x})$  [truth, norm]', fontsize=10)
 
         ax = axes[2, i]
         cf_p = ax.contourf(pred_norm[i].numpy(), levels=u_lev, cmap='viridis')
-        ax.set_xlabel('x', fontsize=9)
         ax.set_aspect('equal')
+        ax.set_xlabel('')
+        ax.set_ylabel('')
         if i == 0:
-            ax.set_ylabel('\u00fb(x,y)  [FNO, norm]', fontsize=10)
+            ax.set_ylabel(r'$\hat{u}(\mathbf{x})$  [FNO, norm]', fontsize=10)
 
-    fig.colorbar(cf_a, ax=axes[0].tolist(), location='right', shrink=0.95, label='a(x,y)')
-    fig.colorbar(cf_u, ax=axes[1].tolist(), location='right', shrink=0.95, label='u(x,y)')
-    fig.colorbar(cf_p, ax=axes[2].tolist(), location='right', shrink=0.95, label='\u00fb(x,y)')
+    fig.colorbar(cf_a, ax=axes[0].tolist(), location='right', shrink=0.95, label=r'$a(\mathbf{x})$')
+    fig.colorbar(cf_u, ax=axes[1].tolist(), location='right', shrink=0.95, label=r'$u(\mathbf{x})$')
+    fig.colorbar(cf_p, ax=axes[2].tolist(), location='right', shrink=0.95, label=r'$\hat{u}(\mathbf{x})$')
 
     fig.suptitle(f'FNO: input / truth / prediction  (test set, norm){title_extra}', fontsize=12)
     plt.savefig(save_path, dpi=150, bbox_inches='tight')
@@ -359,13 +364,16 @@ if __name__ == '__main__':
     print("Test loss:{}".format(testloss))
     
     ############################# Plot #############################
-    plt.figure(1)
+    plt.figure(figsize=(8, 5))
     plt.plot(x, loss_train_list, label='Train loss')
     plt.plot(x, loss_test_list, label='Test loss')
     plt.xlabel('Epoch')
     plt.ylabel('Loss')
+    plt.ylim(0, 0.05)
     plt.legend()
     plt.grid()
+    plt.savefig('fno_loss_plot.png', dpi=150, bbox_inches='tight')
+    print('Loss plot saved -> fno_loss_plot.png')
     plt.show()
 
     data_dict = {
